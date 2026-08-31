@@ -2,20 +2,32 @@ import { Injectable } from '@nestjs/common';
 
 @Injectable()
 export class PythonVisionService {
-  async analisar(imagem: Buffer) {
+  private readonly url = 'http://localhost:5001/analisar';
+
+  async analisar(ctx: any) {
+    const photo = ctx.message.photo.at(-1);
+
+    const file = await ctx.telegram.getFile(photo.file_id);
+
+    const fileUrl = `https://api.telegram.org/file/bot${process.env.BOT_TOKEN}/${file.file_path}`;
+
+    const response = await fetch(fileUrl);
+
+    const imagem = Buffer.from(await response.arrayBuffer());
+
     const formData = new FormData();
 
-    formData.append('imagem', new Blob([new Uint8Array(imagem)]), 'imagem.jpg');
+    formData.append('imagem', new Blob([imagem]), 'imagem.jpg');
 
-    const response = await fetch('http://localhost:5001/analisar', {
+    const resultado = await fetch(this.url, {
       method: 'POST',
       body: formData,
     });
 
-    if (!response.ok) {
-      throw new Error(`Python Vision retornou HTTP ${response.status}`);
+    if (!resultado.ok) {
+      throw new Error(`Python Vision retornou ${resultado.status}`);
     }
 
-    return response.json();
+    return resultado.json();
   }
 }

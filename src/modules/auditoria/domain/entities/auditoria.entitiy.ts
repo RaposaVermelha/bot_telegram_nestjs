@@ -1,14 +1,16 @@
-export class Auditoria {
+import { AuditoriaEtapa } from '../enums/auditoria-etapa.enum';
+
+export class AuditoriaEntity {
   constructor(
     public readonly chatId: number,
-    private etapa: string,
+    private etapa: AuditoriaEtapa,
   ) {}
 
-  getEtapa(): string {
+  getEtapa(): AuditoriaEtapa {
     return this.etapa;
   }
 
-  avancar(etapa: string): void {
+  avancarPara(etapa: AuditoriaEtapa): void {
     this.etapa = etapa;
   }
 }
