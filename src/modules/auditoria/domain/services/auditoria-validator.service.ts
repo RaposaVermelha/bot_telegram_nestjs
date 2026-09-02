@@ -1,8 +1,15 @@
+import { Injectable } from '@nestjs/common';
+
 import { ResultadoVision } from '../../../../shared/types/resultado-vision.type';
 import { AuditoriaEtapa } from '../enums/auditoria-etapa.enum';
 
-export class AuditoriaService {
+@Injectable()
+export class AuditoriaValidatorService {
   validarImagem(etapa: AuditoriaEtapa, resultado: ResultadoVision): boolean {
+    if (!resultado?.contexto) {
+      return false;
+    }
+
     switch (etapa) {
       case AuditoriaEtapa.ONU:
         return resultado.contexto === 'ONU_TRASEIRA';
