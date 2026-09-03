@@ -2,17 +2,23 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Context } from 'telegraf';
 
 import { ResultadoVision } from '../../../../shared/types/resultado-vision.type';
+import { GeminiVisionService } from '../../../gemini/infra/services/gemini-vision.service';
 import {
   AUDITORIA_REPOSITORY,
   type AuditoriaRepository,
 } from '../../domain/repositories/auditoria.repository';
 import { AuditoriaValidatorService } from '../../domain/services/auditoria-validator.service';
-import { PythonVisionError } from '../../infra/errors/python-vision.error';
-import { PythonVisionService } from '../../infra/services/python-vision.service';
 import {
   AuditoriaMessages,
   mensagemAprovacao,
 } from '../messages/auditoria.messages';
+
+const CONTEXTOS_VALIDOS = new Set([
+  'ONU_TRASEIRA',
+  'POTENCIA_CTO',
+  'POTENCIA_CASA',
+  'DESCONHECIDO',
+]);
 
 @Injectable()
 export class ProcessarImagemUseCase {
@@ -21,8 +27,8 @@ export class ProcessarImagemUseCase {
   constructor(
     @Inject(AUDITORIA_REPOSITORY)
     private readonly auditoriaRepository: AuditoriaRepository,
-    private readonly pythonVision: PythonVisionService,
     private readonly validator: AuditoriaValidatorService,
+    private readonly geminiVision: GeminiVisionService,
   ) {}
 
   async execute(ctx: Context): Promise<void> {
@@ -80,7 +86,7 @@ export class ProcessarImagemUseCase {
         'Erro ao processar imagem da auditoria',
         error instanceof Error ? error.stack : error,
       );
-      await this.responderErro(ctx, error);
+      await this.responderErro(ctx);
     }
   }
 
@@ -122,26 +128,54 @@ export class ProcessarImagemUseCase {
   private async analisarImagem(
     imagem: Buffer,
   ): Promise<ResultadoVision | null> {
-    const resultado = await this.pythonVision.analisar(imagem);
+    const resposta = await this.geminiVision.analisarImagem(
+      imagem,
+      'image/jpeg',
+    );
 
-    if (!resultado || typeof resultado.contexto !== 'string') {
-      this.logger.warn(
-        `Resultado do Python incompleto: ${JSON.stringify(resultado)}`,
-      );
+    this.logger.log(`Resultado Gemini: ${resposta}`);
+
+    return this.parseResultadoVision(resposta);
+  }
+
+  private parseResultadoVision(resposta: string): ResultadoVision | null {
+    if (typeof resposta !== 'string' || !resposta.trim()) {
+      this.logger.warn('Resposta do Gemini vazia ou inválida');
       return null;
     }
 
-    return resultado;
+    try {
+      const parsed: unknown = JSON.parse(resposta.trim());
+
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        this.logger.warn(
+          `Resposta do Gemini não é um objeto JSON: ${resposta}`,
+        );
+        return null;
+      }
+
+      const contexto = (parsed as { contexto?: unknown }).contexto;
+
+      if (typeof contexto !== 'string' || !CONTEXTOS_VALIDOS.has(contexto)) {
+        this.logger.warn(
+          `Contexto inválido retornado pelo Gemini: ${JSON.stringify(parsed)}`,
+        );
+        return null;
+      }
+
+      return { contexto };
+    } catch (error) {
+      this.logger.warn(
+        `JSON malformado retornado pelo Gemini: ${resposta}`,
+        error instanceof Error ? error.message : error,
+      );
+      return null;
+    }
   }
 
-  private async responderErro(ctx: Context, error: unknown): Promise<void> {
+  private async responderErro(ctx: Context): Promise<void> {
     try {
-      const mensagem =
-        error instanceof PythonVisionError
-          ? AuditoriaMessages.erroPython
-          : AuditoriaMessages.erroGenerico;
-
-      await ctx.reply(mensagem);
+      await ctx.reply(AuditoriaMessages.erroGenerico);
     } catch (replyError) {
       this.logger.error(
         'Falha ao enviar mensagem de erro ao usuário',

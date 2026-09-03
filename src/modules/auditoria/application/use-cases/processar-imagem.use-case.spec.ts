@@ -1,17 +1,16 @@
 import { Context } from 'telegraf';
 
+import { GeminiVisionService } from '../../../gemini/infra/services/gemini-vision.service';
 import { AuditoriaEntity } from '../../domain/entities/auditoria.entitiy';
 import { AuditoriaEtapa } from '../../domain/enums/auditoria-etapa.enum';
 import { AuditoriaValidatorService } from '../../domain/services/auditoria-validator.service';
-import { PythonVisionError } from '../../infra/errors/python-vision.error';
 import { InMemoryAuditoriaRepository } from '../../infra/repositories/in-memory-auditoria.repository';
-import { PythonVisionService } from '../../infra/services/python-vision.service';
 import { AuditoriaMessages } from '../messages/auditoria.messages';
 import { ProcessarImagemUseCase } from './processar-imagem.use-case';
 
 describe('ProcessarImagemUseCase', () => {
   let repository: InMemoryAuditoriaRepository;
-  let pythonVision: { analisar: jest.Mock };
+  let geminiVision: { analisarImagem: jest.Mock };
   let useCase: ProcessarImagemUseCase;
   let fetchMock: jest.Mock;
 
@@ -29,11 +28,11 @@ describe('ProcessarImagemUseCase', () => {
 
   beforeEach(() => {
     repository = new InMemoryAuditoriaRepository();
-    pythonVision = { analisar: jest.fn() };
+    geminiVision = { analisarImagem: jest.fn() };
     useCase = new ProcessarImagemUseCase(
       repository,
-      pythonVision as unknown as PythonVisionService,
       new AuditoriaValidatorService(),
+      geminiVision as unknown as GeminiVisionService,
     );
 
     fetchMock = jest.fn().mockResolvedValue({
@@ -49,7 +48,9 @@ describe('ProcessarImagemUseCase', () => {
 
   it('imagem correta avança a etapa', async () => {
     repository.criar(AuditoriaEntity.iniciar(42));
-    pythonVision.analisar.mockResolvedValue({ contexto: 'ONU_TRASEIRA' });
+    geminiVision.analisarImagem.mockResolvedValue(
+      '{"contexto":"ONU_TRASEIRA"}',
+    );
 
     const ctx = criarCtx();
     await useCase.execute(ctx);
@@ -60,7 +61,9 @@ describe('ProcessarImagemUseCase', () => {
 
   it('imagem incorreta não avança a etapa', async () => {
     repository.criar(AuditoriaEntity.iniciar(42));
-    pythonVision.analisar.mockResolvedValue({ contexto: 'POTENCIA_CTO' });
+    geminiVision.analisarImagem.mockResolvedValue(
+      '{"contexto":"POTENCIA_CTO"}',
+    );
 
     const ctx = criarCtx();
     await useCase.execute(ctx);
@@ -71,24 +74,35 @@ describe('ProcessarImagemUseCase', () => {
     );
   });
 
-  it('informa erro quando o Python falha', async () => {
+  it('informa quando o JSON do Gemini é inválido', async () => {
     repository.criar(AuditoriaEntity.iniciar(42));
-    pythonVision.analisar.mockRejectedValue(
-      new PythonVisionError('Python indisponível'),
+    geminiVision.analisarImagem.mockResolvedValue('nao-e-json');
+
+    const ctx = criarCtx();
+    await useCase.execute(ctx);
+
+    expect(repository.buscarPorChatId(42)?.getEtapa()).toBe(AuditoriaEtapa.ONU);
+    expect(ctx.reply).toHaveBeenCalledWith(AuditoriaMessages.resultadoInvalido);
+  });
+
+  it('informa erro quando o Gemini falha', async () => {
+    repository.criar(AuditoriaEntity.iniciar(42));
+    geminiVision.analisarImagem.mockRejectedValue(
+      new Error('Gemini indisponível'),
     );
 
     const ctx = criarCtx();
     await useCase.execute(ctx);
 
     expect(repository.buscarPorChatId(42)?.getEtapa()).toBe(AuditoriaEtapa.ONU);
-    expect(ctx.reply).toHaveBeenCalledWith(AuditoriaMessages.erroPython);
+    expect(ctx.reply).toHaveBeenCalledWith(AuditoriaMessages.erroGenerico);
   });
 
   it('informa quando não há auditoria', async () => {
     const ctx = criarCtx();
     await useCase.execute(ctx);
 
-    expect(pythonVision.analisar).not.toHaveBeenCalled();
+    expect(geminiVision.analisarImagem).not.toHaveBeenCalled();
     expect(ctx.reply).toHaveBeenCalledWith(AuditoriaMessages.semAuditoria);
   });
 
@@ -100,7 +114,7 @@ describe('ProcessarImagemUseCase', () => {
     const ctx = criarCtx();
     await useCase.execute(ctx);
 
-    expect(pythonVision.analisar).not.toHaveBeenCalled();
+    expect(geminiVision.analisarImagem).not.toHaveBeenCalled();
     expect(ctx.reply).toHaveBeenCalledWith(AuditoriaMessages.jaConcluida);
   });
 });
